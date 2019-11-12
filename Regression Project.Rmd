@@ -1,0 +1,825 @@
+---
+#title: "Predicting Data Salaries with Linear Regression"
+#author: "Asees Kaur , Oasis Poudyal , Josh Pause "
+#date: "April 30, 2019"
+output: pdf_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+# load all dependencies and set global params
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(42)
+library(pacman)
+p_load(dplyr, ggplot2, gridExtra, knitr, scales, hasseDiagram, Rgraphviz)
+```
+
+
+\vspace{48px}
+
+\begin{center}
+
+\LARGE{ }
+
+\end{center}
+
+\vspace{48px}
+
+\begin{center}
+
+\LARGE{Predicting Data Salaries with Linear Regression}
+
+\end{center}
+
+\vspace{24pt}
+
+\begin{center}
+Asees Kaur (rh7442), Oasis Poudyal (gr5596), Josh Pause (uf4946)
+\end{center}
+
+\vspace{24pt}
+
+![](regression-analysis.png)\
+
+\vspace{72pt}
+
+\begin{center}
+May 1, 2019
+\end{center}
+
+\newpage
+
+
+```{r echo=FALSE}
+# load our needed data for viz
+compare.models <- readRDS("viz/compare.models.rds")
+compare.errors <- readRDS("viz/compare.errors.rds")
+```
+
+# Introduction
+
+In today's world, one of the most pertinent questions that we as graduate students can ask ourselves is: "What skill set is the most important to get me a job with the highest salary?" More specifically, when it comes to jobs as a Data Scientist, Data Engineer, Data Analyst, or Machine Learning Expert, which skills correspond to the best salaries? Which correspond to the worst? Which models are best suited to predict these salaries? These are the questions we attempt to answer in the following paper.
+
+# Data Description
+
+From January through April 2019, [DataJenius](https://datajenius.com) collected more than 50,000 job listings seeking Data Analysts, Data Engineers, Data Scientists, Machine Learning Engineers and Machine Learning Researchers from Indeed.com, Monster.com, ZipRecruiter.com, LinkedIn.com, and other popular job sites. Using Natural Language Processing, each of these job listings was classified according to 226 unique "skill concepts". For example, the keywords "mssql", "ms sql" and "ms sql server" were all associated to the same skill: "Microsoft SQL Server". This allowed the DataJenius system to see which skills were required by a given job listing, even when employers used different specific keywords to refer to the same skill. 
+
+\vspace{12pt}
+
+**Figure 1: Hasse diagram of example NLP structure**
+
+```{r echo=FALSE, fig.height = 1.5}
+diagram_matrix <- t(matrix(c(FALSE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE), 
+                           nrow = 4, ncol = 4))
+hasse(diagram_matrix, 
+      labels=c("Microsoft SQL Server","mssql","ms sql","ms sql server"),
+      parameters=list(shape="roundrect",arrow=FALSE))
+```
+
+\vspace{12pt}
+
+Of these 50,000 job listings, approximately 5% contained a posted salary; 2,801 job listings included this information. In addition to salary information, we found 226 Boolean features for each observation, set to 1 for jobs which require a given skill, and 0 for jobs which do not.
+
+\vspace{12pt}
+
+**Figure 2: Distribution of salary in the full data**
+
+```{r echo=FALSE, fig.height = 2.5}
+data.jobs <- read.csv("data/JobData.csv")
+ggplot(data.jobs, aes(x=y)) +
+  geom_density(alpha=0.2, fill="green") +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Salary Distribution (y)") +
+  labs(y="Density", x="Posted Salary", subtitle="Based on 2,801 data jobs collected January through April 2019") +
+  geom_vline(xintercept = mean(data.jobs$y), linetype="dashed", color="red") +
+  annotate("text", x = mean(data.jobs$y)+5000, y = 0.000003, label = "Mean Salary", color="red", size=3, angle=90) +
+  geom_vline(xintercept = median(data.jobs$y), linetype="dotted", color="red") +
+  annotate("text", x = mean(data.jobs$y)-7000, y = 0.000003, label = "Median Salary", color="red", size=3, angle=90)
+```
+
+More specifically, our data looks like the table below, with 226 binary columns, corresponding to 226 skills. We also have a corresponding y value (salary) for each of these 2,801 observations. 
+
+**Table 1: Sample data, 206 columns omitted for space**
+
+```{r echo=FALSE}
+tmp <- data.jobs %>%
+  select(y, c1, c2, c3, c4, c5, c6, c7, c8,c9,c10,c11,c12,c13,c14,c15,c16,c17,c18,c19,c20) %>%
+  head(5)
+kable(tmp)
+```
+
+
+# Methods
+
+Given 226 features, multicollinearity was bound to occur, and it did. One option was to manually review the Variance Inflation Factor of each feature, and painstakingly remove the troublemakers. We elected to compare a series of automated feature selection methods instead, including Backward Stepwise and Lasso Regression.
+
+We began by running a Welch's T Test to compare the average salary of jobs that require a given skill, to those that do not require this same skill. We found 127 mean differences that were statistically significant given $\alpha=0.05$. We then trained a Linear Regression model using Ordinary Least Squares on each feature (skill) individually (Single Feature Models), and found the intercepts, coefficients and p-values of these tests matched the results of our Welch's T Tests nearly identically. This confirmed our suspicion that different skills are associated with different salaries. 
+
+In order to compare our different models, we shuffled our data, used the first 70% of observations for training our models, and the remaining 30% for testing them. We compared models in terms of Root Mean Squared Error (RMSE) and the Test $R^2$, which shows how well the predictions of a given model correlate to the true salary of these same job postings. 
+
+$$ RMSE = \sqrt{\frac{1}{n} \sum_{i=1}^n (\text{predicted}_i-\text{observed}_i)^2} $$
+
+We tested a Null Model with no features. We compared that to a Full Model with all 226 features, including the multicollinearity issues discussed above. We also attempted a Full Model (pval < 0.05) which included only the coefficients from the Full Model with $\alpha = 0.05$ significance. We also attempted Backward Stepwise feature selection based on the Akaike Information Criterion (AIC), and a variant of this model which included only the coefficients with $\alpha = 0.05$ significance. We also attempted Backward Stepwise feature selection based on the Bayesian Information Criterion (BIC), which selected 25 features, all with $\alpha = 0.05$ significance. We also compared these models to L1 Lasso Regression. We then used an ensemble Single Feature Model to average the predictions of all 226 individual feature models described above, and a variant of this model which included only the coefficients with $\alpha = 0.05$ significance. Finally we compared this to a Random Forest model, to see how these linear models would compare to a non-linear model. 
+
+We checked all assumptions for all models. We assumed independence due to the random sampling of job listings. We confirmed normality and homoscedasticity, and were satisfied this data was reasonably normal, the relationships reasonably linear, and the residuals had variance that is reasonably constant. 
+
+\newpage
+
+# Results
+
+**Table 2: Comparison of models**
+
+```{r echo=FALSE}
+kable(compare.models)
+```
+
+As we can see in Table 2 above, in terms of RMSE and Test $R^2$, the AIC Backward Stepwise model was the best performing of the linear models. 
+
+
+**Figure 3: Model performance by RMSE**
+
+```{r echo=FALSE, fig.height = 3.5}
+ggplot(compare.models, aes(x=reorder(model, -RMSE), y=RMSE, fill=RMSE)) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low = "#2e5984", high = "#990d30",name = "RMSE", label=dollar_format(prefix="$")) +
+  scale_y_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Performance by RMSE") +
+  labs(y="Root Mean Squared Error", x=" ") +
+  coord_flip()
+```
+
+In the above plot (Figure 3) we see that our Single Feature Model had terrible performance, barely improving on the Null Model. The fatal flaw of the Single Feature Model is that it does not consider interaction effects, that is, it does not consider how certain *combinations* of skills affect salary. 
+
+In the following plot (Figure 4) we can see that in terms of Test $R^2$, none of our linear models did especially well. AIC Backward Stepwise did the best, with Test $R^2$ of 47.5%. In other words, this model only explains an estimated 47.5% of variance in salary. 
+
+\newpage
+
+**Figure 4: Model performance by Test $R^2$**
+
+```{r echo=FALSE, fig.height = 3.5}
+ggplot(compare.models %>% filter(!is.na(Test_R2)), aes(x=reorder(model, Test_R2), y=Test_R2, fill=Test_R2)) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low = "#990d30", high = "#2e5984",name = "Test R2", label=percent) +
+  scale_y_continuous(label=percent) +
+  ggtitle("Model Performance by Test R-Squared") +
+  labs(y="Test R-Squared", x=" ") +
+  coord_flip()
+```
+
+
+When we look at the absolute errors of each model (Figure 5), we can see how poorly the Single Feature Model performs, erroring in excess of $100,000 (in terms of annual salary) on a regular basis. 
+
+\vspace{12pt}
+
+**Figure 5: Model errors (absolute terms)**
+
+```{r echo=FALSE, fig.height = 3.5}
+tmp <- compare.errors
+tmp$error <- sqrt(tmp$error)
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="right") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors") +
+  labs(y="Density", x="Absolute Error") 
+```
+
+When we compare our best linear model (AIC Backward Stepwise) to our worst linear model (Null Model) we can see a radical difference in performance (Figure 6). 
+
+\newpage
+
+
+**Figure 6: Model errors (best linear model versus the worst)**
+
+```{r echo=FALSE, fig.height = 3.5}
+tmp <- compare.errors %>% filter(model=="AIC Backward Stepwise" | model=="Null Model")
+tmp$error <- sqrt(tmp$error) 
+tmp2 <- tmp %>% group_by(model) %>% summarize(mean=mean(error), median=median(error))
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors: Best v. Worst") +
+  labs(y="Density", x="Absolute Error", subtitle="Dashed line is mean error, dotted line is median error.") +
+  geom_vline(xintercept = tmp2$mean[1], linetype="dashed", color="red") +
+  geom_vline(xintercept = tmp2$median[1], linetype="dotted", color="red") +
+  geom_vline(xintercept = tmp2$mean[2], linetype="dashed", color="blue") +
+  geom_vline(xintercept = tmp2$median[2], linetype="dotted", color="blue")
+```
+
+As we see in the plot below (Figure 7), the Random Forest model still outperforms our best linear model (AIC Backward Stepwise) in terms of absolute error. 
+
+\vspace{12pt}
+
+**Figure 7: Model errors (AIC Backward Stepwise v. Random Forest)**
+
+```{r echo=FALSE, fig.height = 3.5}
+tmp <- compare.errors %>% filter(model=="Random Forest" | model=="AIC Backward Stepwise")
+tmp$error <- sqrt(tmp$error) 
+tmp2 <- tmp %>% group_by(model) %>% summarize(mean=mean(error), median=median(error))
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors: AIC Backward Stepwise v. Random Forest") +
+  labs(y="Density", x="Absolute Error", subtitle="Dashed line is mean error, dotted line is median error.") +
+  geom_vline(xintercept = tmp2$mean[1], linetype="dashed", color="blue") +
+  geom_vline(xintercept = tmp2$median[1], linetype="dotted", color="blue") +
+  geom_vline(xintercept = tmp2$mean[2], linetype="dashed", color="purple") +
+  geom_vline(xintercept = tmp2$median[2], linetype="dotted", color="purple") + 
+  scale_fill_manual(name='Key', 
+                          values=c('AIC Backward Stepwise'='blue', 
+                                   'Random Forest'='purple')) +
+    scale_color_manual(name='Key', 
+                          values=c('AIC Backward Stepwise'='blue', 
+                                   'Random Forest'='purple')) 
+```
+
+This provides evidence that Random Forest is the best model when it comes to predicting salaries, but what of our original research question? Which skills correspond to the best salaries? Which correspond to the worst? This depends on which model we ask, and how we measure the importance of each feature. Measured in terms of the largest and smallest coefficients, the Single Feature Model and AIC Backward Stepwise disagree (limited to top and bottom 3 for the sake of brevity).
+
+
+\newpage
+
+**Table 3 and 4: Top 3 and bottom 3 skills according to Single Feature Model (pval < 0.05)**
+
+\begin{table}[!htb]
+    \begin{minipage}{.5\linewidth}
+      \caption{Largest Coefficients}
+      \centering 
+\begin{tabular}{lr}
+\toprule
+skill & coefficient\\
+\midrule
+Reinforcement Learning & \$69,587.78\\
+Convolutional Neural Network & \$60,608.94\\
+Recurrent Neural Network & \$53,340.23\\
+\bottomrule
+\end{tabular} \end{minipage}%
+    \begin{minipage}{.5\linewidth}
+      \centering
+        \caption{Smallest Coefficients} 
+\begin{tabular}{lr}
+\toprule
+skill & coefficient\\
+\midrule
+Microsoft Excel & -\$44,586.75\\
+Stata & -\$40,661.04\\
+Microsoft PowerPoint & -\$39,098.77\\
+\bottomrule
+\end{tabular} \end{minipage} 
+\end{table}
+
+
+\vspace{12pt}
+
+**Table 5 and 6: Top 3 and bottom 3 skills according to AIC Backward Stepwise**
+
+\begin{table}[!htb]
+    \begin{minipage}{.5\linewidth}
+      \caption{Largest Coefficients}
+      \centering 
+\begin{tabular}{lr}
+\toprule
+skill & coefficient\\
+\midrule
+Apache Avro & \$48,878.61\\
+Reinforcement Learning & \$37,176.11\\
+H2O & \$36,792.20\\
+\bottomrule
+\end{tabular} \end{minipage}%
+    \begin{minipage}{.5\linewidth}
+      \centering
+        \caption{Smallest Coefficients} 
+\begin{tabular}{lr}
+\toprule
+skill & coefficient\\
+\midrule
+Latent semantic analysis & -\$86,174.84\\
+Active Learning & -\$63,225.05\\
+Linguistics & -\$41,912.20\\
+\bottomrule
+\end{tabular} \end{minipage} 
+\end{table}
+
+\vspace{12pt}
+
+Our Random Forest model selected 20 total features, but unlike Linear Regression models, does not provide coefficients. Instead we must look at Feature Importance, which is measured in terms of the Out-of-Bag MSE of each feature.
+
+\vspace{12pt}
+
+**Table 7 and 8: The most and least important features according to Random Forest**
+
+\begin{table}[!htb]
+    \begin{minipage}{.5\linewidth}
+      \caption{Most Important}
+      \centering 
+\begin{tabular}{lr}
+\toprule
+skill & importance\\
+\midrule
+Business Intelligence & 100\\
+Analysis & 90.39\\
+Microsoft Excel & 87.95\\
+\bottomrule
+\end{tabular} \end{minipage}%
+    \begin{minipage}{.5\linewidth}
+      \centering
+        \caption{Least Important} 
+\begin{tabular}{lr}
+\toprule
+skill & importance\\
+\midrule
+Cloud Computing & 72.13\\
+SQL & 72.32\\
+Data Pipelines & 72.51\\
+\bottomrule
+\end{tabular} \end{minipage} 
+\end{table}
+
+
+
+# Discussion
+
+Looking at models in terms of Test $R^2$, our Random Forest explains 63.9% of the variance in terms of salary, compared to 47.5% explained by our AIC Backward Stepwise model. Random Forest offered a RMSE of \$28,426.85, with a mean absolute error of \$20,447.94, and a median absolute error of \$15,104.08. Compare this to AIC Backward Stepwise with a RMSE of \$33,655.88, a mean absolute error of \$26,026.40, and a median absolute error of \$21,338.98. 
+
+Skills which strongly influence salary in either direction can be considered the most important. Here we can see the divide between salaries for Machine Learning and Big Data jobs (which require skills like Reinforcement Learning, Apache Avro and Neural Networks), compared to jobs for a more traditional analyst (which require skills like Microsoft Excel and Business Intelligence). 
+
+This research confirms that the skills required by a given job listing are extremely predictive in terms of associated salary, however, they do not tell the full story. Other features, not included here, may help to increase $R^2$ and better explain the totality of salary variance. More specifically, future models would benefit by including features such as the geographic location of the job, the job level (Junior, Senior), and the number of years of required experience, all of which are likely to influence salary considerably. 
+
+
+# References
+
+* Fox, Eric, 2019, Multiple Linear Regression, Linear and Logistic Regression STAT 632, CSUEB, Spring 2019
+
+* Fox, Eric, 2019, Regularization, Linear and Logistic Regression STAT 632, CSUEB, Spring 2019
+
+* Fox, Eric, 2019, Variable Selection, Linear and Logistic Regression STAT 632, CSUEB, Spring 2019
+
+* Pause, Josh. "Which Data Skills Pay the Bills?", 22 Apr. 2019, [datajenius.com/article/which-data-skills-pay-the-bills](https://datajenius.com/article/which-data-skills-pay-the-bills).
+
+* Sheather, Simon J. A Modern Approach to Regression with R. Springer, 2009.
+
+
+# Code Appendix
+
+```{r eval=FALSE}
+set.seed(42)
+library(pacman)
+p_load(car, dplyr, ggplot2, knitr, scales, tibble, tidyr, tictoc, effsize, pwr, glmnet, hdi, hasseDiagram, Rgraphviz)
+
+# load our data into dataframes
+data.jobs <- read.csv("data/JobData.csv")
+data.concepts <- read.csv("data/ConceptData.csv")
+
+# Shuffle our data, and use 70% for training. 
+data.jobs <- data.jobs[sample(nrow(data.jobs)),]
+data.jobs.train <- data.jobs[1:ceiling(nrow(data.jobs)*.7),]
+data.jobs.test <- data.jobs[(ceiling(nrow(data.jobs)*.7)+1):nrow(data.jobs),]
+
+# function to perform Welch's t-test on the 1 versus 0 for each concept
+analyze_feature <- function(feature, salaries, id) {
+  
+  # set our params
+  alpha <- 0.05
+  
+  # split into two groups - with skill and without
+  data <- data.frame(x=feature, y=salaries)
+  groupA <- data[which(data$x==1),]$y # with
+  groupB <- data[which(data$x==0),]$y # without
+  
+  # count sizes of groups
+  n1 <- length(groupA)
+  n2 <- length(groupB)
+  
+  # averages of groups
+  mu1 <- mean(groupA)
+  mu2 <- mean(groupB)
+  
+  # require at least 2 examples
+  if(n1 < 2 | n2 < 2) {
+    return(data.frame(concept_id=id,
+                      n1=n1,
+                      n0=n2,
+                      mean1=mu1,
+                      mean0=mu2, 
+                      diff=0,
+                      pval=NA,
+                      power=NA))
+  }
+
+  # Welch's t-test
+  # see also: http://daniellakens.blogspot.com/2015/01/always-use-welchs-t-test-instead-of.html
+  res <- t.test(groupA,
+                groupB,
+                 alternative = "two.sided", 
+                 mu=0, 
+                 var.equal = FALSE,
+                 conf.level = 1-alpha)
+  
+  # do we see a significant difference in means?
+  diff <- mean(res$conf.int)
+  
+  # calculate our power
+  cohens_d <- cohen.d(groupA,groupB)
+  pwr <- pwr.t2n.test(n1=n1, 
+                      n2=n2,
+                      d=cohens_d$estimate,
+                      sig.level=alpha,
+                      alternative="two.sided",
+                      power=NULL)
+  
+  # put everything in a row
+  row <- data.frame(concept_id=id,
+                    n1=n1,
+                    n0=n2,
+                    mean1=mean(groupA),
+                    mean0=mean(groupB), 
+                    diff=diff,
+                    pval=res$p.value,
+                    power=pwr$power)
+  return(row)
+}
+results <- analyze_feature(data.jobs.train$c1, data.jobs.train$y, "c1")
+
+# get Welsch test for all features
+for(i in colnames(data.jobs.train %>% select(-c1,-y, -X))) {
+  results <- rbind(results, 
+                   analyze_feature(data.jobs.train[[i]], 
+                                   data.jobs.train$y,
+                                   i))
+}
+res.welch <- results
+
+# run each individual variable through linear regression
+lm_single <- function(feature, data) {
+  lmtmp <- lm(y ~ eval(as.symbol(feature)), data=data)
+  intercept <- lmtmp$coefficients[1]
+  coefficient <- lmtmp$coefficients[2]
+  pval <- summary(lmtmp)$coefficients[,4][2]   
+  row <- data.frame(feature, intercept, coefficient, pval)
+  rownames(row) <- c(feature)
+  return(row)
+}
+results <- lm_single("c1",data.jobs.train)
+# get lm for all features individually
+for(i in colnames(data.jobs.train %>% select(-c1,-y, -X))) {
+  results <- rbind(results, lm_single(i,data.jobs.train))
+}
+res.single <- results
+
+# look at correlation
+cor(res.welch$mean0,res.single$intercept, use="complete.obs")
+cor(res.welch$diff,res.single$coefficient, use="complete.obs")
+cor(res.welch$pval,res.single$pval, use="complete.obs")
+
+# consider the features with p-value < 0.05
+res.single.sigp <- res.single %>%
+  filter(pval < 0.05) 
+
+# Train a full model: 
+lm.full <- lm(y ~ ., data=data.jobs.train %>% select(-X))
+res.full <- data.frame(feature=names(summary(lm.full)$coefficients[,4][2:length(lm.full$coefficients)]),
+                       coefficient=lm.full$coefficients[2:length(lm.full$coefficients)],
+                       pval=summary(lm.full)$coefficients[,4][2:length(lm.full$coefficients)])
+res.full.sigp <- res.full %>% filter(pval < 0.05)
+
+# Train a model on only the 39 significant features from the full test. 
+tmp <- data.jobs.train %>%
+  select(one_of(as.character(res.full.sigp$feature)),y)
+lm.full.sigp <- lm(y~., data=tmp)
+
+# L1 Lasso Regression
+x <- model.matrix(y ~ ., data=data.jobs.train %>% select(-X))
+tic()
+model.cvlasso <- cv.glmnet(x, data.jobs.train$y, alpha=1)
+toc()
+saveRDS(model.cvlasso, "models/model.cvlasso.rds")
+
+# load from saved model
+lm.lasso <- readRDS("models/model.cvlasso.rds")
+tmp <- coef(lm.lasso, s = "lambda.min")[,1]
+tmp <- data.frame(feature=names(tmp), 
+                  coefficient=tmp) %>%
+      filter(feature != "(Intercept)") %>%
+      filter(coefficient > 0)
+res.lasso <- tmp
+
+# backward stepwise AIC 
+tic()
+model.stepwiseAIC <- step(lm.full, k=2, direction="backward", trace=TRUE)
+toc()
+saveRDS(model.stepwiseAIC, "models/model.stepwiseAIC.rds")
+
+# backward stepwise BIC 
+tic()
+model.stepwiseBIC <- step(lm.full, k=log(nrow(data.jobs.train)), direction="backward", trace=TRUE)
+toc()
+saveRDS(model.stepwiseBIC, "models/model.stepwiseBIC.rds")
+
+# load AIC and BIC models from disk
+lm.stepwiseAIC <- readRDS("models/model.stepwiseAIC.rds")
+lm.stepwiseBIC <- readRDS("models/model.stepwiseBIC.rds")
+
+# AIC model
+res.aic <- data.frame(feature=names(summary(lm.stepwiseAIC)$coefficients[,4][2:length(lm.stepwiseAIC$coefficients)]),
+                       coefficient=lm.stepwiseAIC$coefficients[2:length(lm.stepwiseAIC$coefficients)],
+                       pval=summary(lm.stepwiseAIC)$coefficients[,4][2:length(lm.stepwiseAIC$coefficients)])
+res.aic.sigp <- res.aic %>% filter(pval < 0.05)
+
+# Train a model on only the 60 significant features from the AIC model. 
+tmp <- data.jobs.train %>%
+  select(one_of(as.character(res.aic.sigp$feature)),y)
+lm.stepwiseAIC.sigp <- lm(y~., data=tmp)
+
+# BIC model
+res.bic <- data.frame(feature=names(summary(lm.stepwiseBIC)$coefficients[,4][2:length(lm.stepwiseBIC$coefficients)]),
+                       coefficient=lm.stepwiseBIC$coefficients[2:length(lm.stepwiseBIC$coefficients)],
+                       pval=summary(lm.stepwiseBIC)$coefficients[,4][2:length(lm.stepwiseBIC$coefficients)])
+
+# simple RMSE function
+RMSE = function(pred, truth){
+  sqrt(mean((pred - truth)**2))
+}
+
+# squared errors
+SQUARED_ERRORS = function(pred, truth){
+  return((pred - truth)**2)
+}
+
+# simple TEST R-SQUARED function
+#--------------------------------------------------------------------------------------------
+# you can also report a test R^2.  This can be computed by taking the correlation between 
+# the actual and predicted values on the test data for each model (using the cor() function),
+# and then squaring the correlation value.
+#--------------------------------------------------------------------------------------------
+TEST_R_SQUARED = function(pred, truth){
+  cor(truth,pred)^2
+}
+
+# Test a Null Model:
+lm.null <- lm(y ~ 1, data=data.jobs.train)
+pred <- predict(lm.null, data.jobs.test)
+compare.models <- data.frame(model="Null Model",
+                             features=0,
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y))
+compare.errors <- data.frame(model="Null Model", error=SQUARED_ERRORS(pred,data.jobs.test$y))
+
+# Test the Full Model:
+pred <- predict(lm.full, data.jobs.test)
+compare.models <- rbind(compare.models,data.frame(model="Full Model",
+                             features=nrow(res.full),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="Full Model", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+# Test the Full Model, significant features only: 
+pred <- predict(lm.full.sigp, data.jobs.test)
+compare.models <- rbind(compare.models,data.frame(model="Full Model (pval < 0.05)",
+                             features=nrow(res.full.sigp),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="Full Model (pval < 0.05)", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+# Test AIC:
+pred <- predict(lm.stepwiseAIC, data.jobs.test)
+compare.models <- rbind(compare.models,data.frame(model="AIC Backward Stepwise",
+                             features=nrow(res.aic),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="AIC Backward Stepwise", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+
+# Test AIC, significant features only: 
+pred <- predict(lm.stepwiseAIC.sigp, data.jobs.test)
+compare.models <- rbind(compare.models,data.frame(model="AIC Backward Stepwise (pval < 0.05)",
+                             features=nrow(res.aic.sigp),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="AIC Backward Stepwise (pval < 0.05)", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+
+# Test BIC: 
+pred <- predict(lm.stepwiseBIC, data.jobs.test)
+compare.models <- rbind(compare.models,data.frame(model="BIC Backward Stepwise (pval < 0.05)",
+                             features=nrow(res.bic),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="BIC Backward Stepwise (pval < 0.05)", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+# Test Lasso: 
+  
+x <- model.matrix(y ~ ., data=data.jobs.test %>% select(-X))
+pred <- predict(lm.lasso, s = lm.lasso$lambda.min, newx = x)
+pred <- pred[,1]
+compare.models <- rbind(compare.models,data.frame(model="L1 Lasso Regression",
+                             features=nrow(res.lasso),
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="L1 Lasso Regression", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+# function to calculate a prediction
+pred_single_model <- function(row, values) {
+  row <- merge(row, values, by="feature", all_y=TRUE) %>%
+    mutate(modifier=has_skill*coefficient) %>%
+    mutate(predf=modifier+intercept)
+  pred <- mean(row$predf, na.rm=TRUE)
+  return(pred)
+}
+
+# get predictions
+preds <- c()
+for(i in 1:nrow(data.jobs.test)) {
+  row <- data.jobs.test[i,]
+  row <- gather(row, feature, has_skill, c1:c226, factor_key=FALSE) %>% select(feature,has_skill)
+  preds[i] <- pred_single_model(row, res.single)
+}
+
+compare.models <- rbind(compare.models,data.frame(model="Single Feature Model",
+                             features=nrow(res.single),
+                             RMSE=RMSE(preds,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(preds,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="Single Feature Model", error=SQUARED_ERRORS(preds,data.jobs.test$y)))
+
+# I also want to see how the "Single Feature Model" performs. 
+# get predictions
+preds <- c()
+for(i in 1:nrow(data.jobs.test)) {
+  row <- data.jobs.test[i,]
+  row <- gather(row, feature, has_skill, c1:c226, factor_key=FALSE) %>% select(feature,has_skill)
+  preds[i] <- pred_single_model(row, res.single.sigp)
+}
+
+compare.models <- rbind(compare.models,data.frame(model="Single Feature Model (pval < 0.05)",
+                             features=nrow(res.single.sigp),
+                             RMSE=RMSE(preds,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(preds,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="Single Feature Model (pval < 0.05)", error=SQUARED_ERRORS(preds,data.jobs.test$y)))
+
+
+# Random Forest: 
+tic()
+x <- data.jobs.train %>% select(-y, -X)
+y <- data.jobs.train$y
+library(randomForest)
+library(mlbench)
+library(caret)
+
+# Create model with default paramters
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+seed <- 7
+metric <- "RMSE"
+set.seed(seed)
+mtry <- sqrt(ncol(x))
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(y~., data=data.jobs.train %>% select(-X), method="rf", metric=metric, tuneGrid=tunegrid, trControl=control)
+print(rf_default)
+toc() 
+
+rf_default
+pred <- predict(rf_default, data.jobs.test)
+
+compare.models <- rbind(compare.models,data.frame(model="Random Forest",
+                             features=226,
+                             RMSE=RMSE(pred,data.jobs.test$y),
+                             Test_R2=TEST_R_SQUARED(pred,data.jobs.test$y)))
+
+compare.errors <- rbind(compare.errors,data.frame(model="Random Forest", error=SQUARED_ERRORS(pred,data.jobs.test$y)))
+
+# save data for visualization
+saveRDS(compare.models, "viz/compare.models.rds")
+saveRDS(compare.errors, "viz/compare.errors.rds")
+
+
+# Visualization code
+diagram_matrix <- t(matrix(c(FALSE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE,
+                           TRUE, FALSE, FALSE, FALSE), 
+                           nrow = 4, ncol = 4))
+hasse(diagram_matrix, 
+      labels=c("Microsoft SQL Server","mssql","ms sql","ms sql server"),
+      parameters=list(shape="roundrect",arrow=FALSE))
+
+
+data.jobs <- read.csv("data/JobData.csv")
+ggplot(data.jobs, aes(x=y)) +
+  geom_density(alpha=0.2, fill="green") +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Salary Distribution (y)") +
+  labs(y="Density", x="Posted Salary", subtitle="Based on 2,801 data jobs collected January through April 2019") +
+  geom_vline(xintercept = mean(data.jobs$y), linetype="dashed", color="red") +
+  annotate("text", x = mean(data.jobs$y)+5000, y = 0.000003, label = "Mean Salary", color="red", size=3, angle=90) +
+  geom_vline(xintercept = median(data.jobs$y), linetype="dotted", color="red") +
+  annotate("text", x = mean(data.jobs$y)-7000, y = 0.000003, label = "Median Salary", color="red", size=3, angle=90)
+
+tmp <- data.jobs %>%
+  select(y, c1, c2, c3, c4, c5, c6, c7, c8,c9,c10,c11,c12,c13,c14,c15,c16,c17,c18,c19,c20) %>%
+  head(5)
+kable(tmp)
+
+kable(compare.models)
+
+
+ggplot(compare.models, aes(x=reorder(model, -RMSE), y=RMSE, fill=RMSE)) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low = "#2e5984", high = "#990d30",name = "RMSE", label=comma) +
+  scale_y_continuous(label=comma) +
+  ggtitle("Model Performance by RMSE") +
+  labs(y="Root Mean Squared Error", x=" ") +
+  coord_flip()
+
+ggplot(compare.models %>% filter(!is.na(Test_R2)), aes(x=reorder(model, Test_R2), y=Test_R2, fill=Test_R2)) +
+  geom_bar(stat="identity") +
+  scale_fill_gradient(low = "#990d30", high = "#2e5984",name = "Test R2", label=percent) +
+  scale_y_continuous(label=percent) +
+  ggtitle("Model Performance by Test R-Squared") +
+  labs(y="Test R-Squared", x=" ") +
+  coord_flip()
+
+tmp <- compare.errors
+tmp$error <- sqrt(tmp$error)
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="right") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors") +
+  labs(y="Density", x="Absolute Error") 
+
+tmp <- compare.errors %>% filter(model=="AIC Backward Stepwise" | model=="Null Model")
+tmp$error <- sqrt(tmp$error) 
+tmp2 <- tmp %>% group_by(model) %>% summarize(mean=mean(error), median=median(error))
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors: Best v. Worst") +
+  labs(y="Density", x="Absolute Error", subtitle="Dashed line is mean error, dotted line is median error.") +
+  geom_vline(xintercept = tmp2$mean[1], linetype="dashed", color="red") +
+  geom_vline(xintercept = tmp2$median[1], linetype="dotted", color="red") +
+  geom_vline(xintercept = tmp2$mean[2], linetype="dashed", color="blue") +
+  geom_vline(xintercept = tmp2$median[2], linetype="dotted", color="blue")
+
+tmp <- compare.errors %>% filter(model=="Random Forest" | model=="AIC Backward Stepwise")
+tmp$error <- sqrt(tmp$error) 
+tmp2 <- tmp %>% group_by(model) %>% summarize(mean=mean(error), median=median(error))
+ggplot(tmp, aes(x=error, color=model, fill=model)) +
+  geom_density(alpha=0.2) +
+  theme(legend.position="bottom") +
+  scale_x_continuous(labels=dollar_format(prefix="$")) +
+  ggtitle("Model Errors: AIC Backward Stepwise v. Random Forest") +
+  labs(y="Density", x="Absolute Error", subtitle="Dashed line is mean error, dotted line is median error.") +
+  geom_vline(xintercept = tmp2$mean[1], linetype="dashed", color="blue") +
+  geom_vline(xintercept = tmp2$median[1], linetype="dotted", color="blue") +
+  geom_vline(xintercept = tmp2$mean[2], linetype="dashed", color="purple") +
+  geom_vline(xintercept = tmp2$median[2], linetype="dotted", color="purple") + 
+  scale_fill_manual(name='Key', 
+                          values=c('AIC Backward Stepwise'='blue', 
+                                   'Random Forest'='purple')) +
+    scale_color_manual(name='Key', 
+                          values=c('AIC Backward Stepwise'='blue', 
+                                   'Random Forest'='purple')) 
+
+
+# which skills pay the bills?
+cons <- data.concepts %>%
+  mutate(feature=paste("c",concept_id, sep="")) %>%
+  mutate(skill=name) %>%
+  select(feature,skill)
+best.sm <- merge(res.single.sigp, cons, by="feature", all_y=TRUE) %>%
+  arrange(desc(coefficient)) %>%
+  head(3) %>%
+  select(skill, coefficient)
+worst.sm <- merge(res.single.sigp, cons, by="feature", all_y=TRUE) %>%
+  arrange(coefficient) %>%
+  head(3) %>%
+  select(skill, coefficient)
+t1 <- kable(best.sm, format = "latex", booktabs = TRUE)
+t2 <- kable(worst.sm, format = "latex", booktabs = TRUE)
+cat(c("\\begin{table}[!htb]
+    \\begin{minipage}{.5\\linewidth}
+      \\caption{}
+      \\centering",
+        t1,
+    "\\end{minipage}%
+    \\begin{minipage}{.5\\linewidth}
+      \\centering
+        \\caption{}",
+        t2,
+    "\\end{minipage} 
+\\end{table}"
+))  
+```
